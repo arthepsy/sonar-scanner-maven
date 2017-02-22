@@ -98,6 +98,8 @@ public class MavenProjectConverter {
 
   private static final String SUREFIRE_REPORTS_PATH_PROPERTY = "sonar.junit.reportsPath";
 
+  private static final String EXTENDED_PROPERTY_POSTFIX = "._extend";
+
   /**
    * Optional paths to binaries, for example to declare the directory of Java bytecode. Example : "binDir"
    */
@@ -291,6 +293,26 @@ public class MavenProjectConverter {
     }
   }
 
+  private static void combineProperties(Properties props, Properties otherProps, Boolean copy, Boolean extend) {
+    if (copy || extend) {
+      for (String k : otherProps.stringPropertyNames()) {
+        String v = otherProps.getProperty(k);
+        if (k.endsWith(EXTENDED_PROPERTY_POSTFIX)) {
+          k = StringUtils.removeEnd(k, EXTENDED_PROPERTY_POSTFIX);
+          if (k.length() == 0) {
+            continue;
+          }
+          v = Arrays.asList(props.getProperty(k), v).stream()
+                  .filter(StringUtils::isNotBlank)
+                  .collect(Collectors.joining(String.valueOf(SEPARATOR)));
+        }
+        props.put(k, v);
+      }
+    } else {
+      props.putAll(otherProps);
+    }
+  }
+
   private void synchronizeFileSystemAndOtherProps(MavenProject pom, Properties props)
     throws MojoExecutionException {
     props.setProperty(ScanProperties.PROJECT_BASEDIR, pom.getBasedir().getAbsolutePath());
@@ -308,15 +330,9 @@ public class MavenProjectConverter {
 
     // IMPORTANT NOTE : reference on properties from POM model must not be saved,
     // instead they should be copied explicitly - see SONAR-2896
-    for (String k : pom.getModel().getProperties().stringPropertyNames()) {
-      props.put(k, pom.getModel().getProperties().getProperty(k));
-    }
+    combineProperties(props, pom.getModel().getProperties(), true, true);
 
-    props.putAll(envProperties);
-
-    // Add user properties (ie command line arguments -Dsonar.xxx=yyyy) in last position to
-    // override all other
-    props.putAll(userProperties);
+    combineProperties(props, envProperties, false, false);
 
     List<File> mainDirs = mainSources(pom);
     props.setProperty(ScanProperties.PROJECT_SOURCE_DIRS, StringUtils.join(toPaths(mainDirs), SEPARATOR));
@@ -326,6 +342,10 @@ public class MavenProjectConverter {
     } else {
       props.remove(ScanProperties.PROJECT_TEST_DIRS);
     }
+
+    // Add user properties (ie command line arguments -Dsonar.xxx=yyyy) in last position to
+    // override all other
+    combineProperties(props, userProperties, false, true);
   }
 
   private static void populateSurefireReportsPath(MavenProject pom, Properties props) {
